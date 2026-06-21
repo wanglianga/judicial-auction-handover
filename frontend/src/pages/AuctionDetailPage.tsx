@@ -3,18 +3,42 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { auctionApi } from '../services/api';
 import type { Auction, TimelineEvent } from '../types';
 import { statusMap, formatCurrency, formatDate } from '../utils';
+import { useUserStore } from '../store/userStore';
 import Timeline from '../components/Timeline';
-import { ArrowLeft, AlertTriangle, FileText, CreditCard, Building2, Landmark, Key, CheckCircle } from 'lucide-react';
+import Modal from '../components/Modal';
+import DepositForm from '../components/DepositForm';
+import LoanApplicationForm from '../components/LoanApplicationForm';
+import BalancePaymentForm from '../components/BalancePaymentForm';
+import PropertyInfoForm from '../components/PropertyInfoForm';
+import {
+  ArrowLeft,
+  AlertTriangle,
+  FileText,
+  CreditCard,
+  Building2,
+  Landmark,
+  Key,
+  CheckCircle,
+  Plus,
+  Edit,
+  PiggyBank,
+} from 'lucide-react';
 
 type TabType = 'info' | 'risk' | 'payment' | 'property' | 'tax' | 'eviction';
 
 export default function AuctionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { userId, role } = useUserStore();
   const [auction, setAuction] = useState<Auction | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>('info');
   const [loading, setLoading] = useState(true);
+
+  const [depositModalOpen, setDepositModalOpen] = useState(false);
+  const [loanModalOpen, setLoanModalOpen] = useState(false);
+  const [balanceModalOpen, setBalanceModalOpen] = useState(false);
+  const [propertyModalOpen, setPropertyModalOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -47,6 +71,36 @@ export default function AuctionDetailPage() {
   }
 
   const statusInfo = statusMap[auction.status];
+
+  const hasMyDeposit = auction.deposits.some((d) => d.bidderId === userId);
+  const isWinner = auction.winningBidder?.id === userId;
+  const hasMyLoan = auction.loanApplications.some((l) => l.bidderId === userId);
+  const hasBalancePaid = auction.balancePayments.length > 0;
+
+  const canPayDeposit = !hasMyDeposit && auction.status !== 'pending' && auction.auctionNotice;
+  const canApplyLoan = isWinner && !hasMyLoan && auction.status !== 'pending';
+  const canPayBalance = isWinner && !hasBalancePaid && auction.status !== 'pending';
+  const canEditProperty = role === 'property';
+
+  const handleDepositSuccess = () => {
+    setDepositModalOpen(false);
+    loadData();
+  };
+
+  const handleLoanSuccess = () => {
+    setLoanModalOpen(false);
+    loadData();
+  };
+
+  const handleBalanceSuccess = () => {
+    setBalanceModalOpen(false);
+    loadData();
+  };
+
+  const handlePropertySuccess = () => {
+    setPropertyModalOpen(false);
+    loadData();
+  };
 
   const tabs: { key: TabType; label: string; icon: any }[] = [
     { key: 'info', label: '标的信息', icon: FileText },
@@ -395,6 +449,50 @@ export default function AuctionDetailPage() {
 
               {activeTab === 'payment' && (
                 <div className="space-y-6">
+                  {role === 'bidder' && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center justify-between flex-wrap gap-3">
+                        <div>
+                          <h4 className="font-medium text-blue-700 mb-1">💰 我要操作</h4>
+                          <p className="text-sm text-blue-600">
+                            {hasMyDeposit
+                              ? '您已缴纳保证金，可以参与竞拍'
+                              : '缴纳保证金后即可参与竞拍'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {canPayDeposit && (
+                            <button
+                              onClick={() => setDepositModalOpen(true)}
+                              className="flex items-center gap-1 px-4 py-2 bg-yellow-500 text-white text-sm font-medium rounded-lg hover:bg-yellow-600 transition-colors"
+                            >
+                              <PiggyBank size={16} />
+                              缴纳保证金
+                            </button>
+                          )}
+                          {canApplyLoan && (
+                            <button
+                              onClick={() => setLoanModalOpen(true)}
+                              className="flex items-center gap-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors"
+                            >
+                              <Plus size={16} />
+                              申请贷款
+                            </button>
+                          )}
+                          {canPayBalance && (
+                            <button
+                              onClick={() => setBalanceModalOpen(true)}
+                              className="flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                            >
+                              <Plus size={16} />
+                              支付尾款
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <section>
                     <h3 className="text-lg font-semibold text-gray-800 mb-4">💰 保证金缴纳</h3>
                     {auction.deposits.length > 0 ? (
@@ -558,6 +656,33 @@ export default function AuctionDetailPage() {
 
               {activeTab === 'property' && (
                 <div className="space-y-6">
+                  {canEditProperty && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium text-blue-700 mb-1">🏢 物业信息管理</h4>
+                        <p className="text-sm text-blue-600">
+                          {auction.propertyArrears ? '点击修改可更新物业欠费信息' : '请录入物业欠费及相关信息'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setPropertyModalOpen(true)}
+                        className="flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        {auction.propertyArrears ? (
+                          <>
+                            <Edit size={16} />
+                            修改物业信息
+                          </>
+                        ) : (
+                          <>
+                            <Plus size={16} />
+                            录入物业信息
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
                   <h3 className="text-lg font-semibold text-gray-800">🏢 物业信息</h3>
                   {auction.propertyArrears ? (
                     <div className="space-y-4">
@@ -860,6 +985,67 @@ export default function AuctionDetailPage() {
           <Timeline events={timeline} />
         </aside>
       </div>
+
+      <Modal
+        isOpen={depositModalOpen}
+        onClose={() => setDepositModalOpen(false)}
+        title="缴纳保证金"
+        size="md"
+      >
+        <DepositForm
+          auctionId={auction.id}
+          auctionTitle={auction.title}
+          depositAmount={auction.auctionNotice?.depositAmount || 0}
+          onSuccess={handleDepositSuccess}
+          onCancel={() => setDepositModalOpen(false)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={loanModalOpen}
+        onClose={() => setLoanModalOpen(false)}
+        title="提交贷款申请"
+        size="lg"
+      >
+        <LoanApplicationForm
+          auctionId={auction.id}
+          auctionTitle={auction.title}
+          transactionPrice={auction.transactionPrice || auction.currentPrice || 0}
+          onSuccess={handleLoanSuccess}
+          onCancel={() => setLoanModalOpen(false)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={balanceModalOpen}
+        onClose={() => setBalanceModalOpen(false)}
+        title="支付尾款"
+        size="lg"
+      >
+        <BalancePaymentForm
+          auctionId={auction.id}
+          auctionTitle={auction.title}
+          transactionPrice={auction.transactionPrice || auction.currentPrice || 0}
+          depositAmount={auction.auctionNotice?.depositAmount || 0}
+          onSuccess={handleBalanceSuccess}
+          onCancel={() => setBalanceModalOpen(false)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={propertyModalOpen}
+        onClose={() => setPropertyModalOpen(false)}
+        title={auction.propertyArrears ? '修改物业信息' : '录入物业信息'}
+        size="lg"
+      >
+        <PropertyInfoForm
+          auctionId={auction.id}
+          auctionTitle={auction.title}
+          initialData={auction.propertyArrears}
+          onSuccess={handlePropertySuccess}
+          onCancel={() => setPropertyModalOpen(false)}
+        />
+      </Modal>
     </div>
   );
 }
