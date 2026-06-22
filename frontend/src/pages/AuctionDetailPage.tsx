@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { auctionApi } from '../services/api';
 import type { Auction, TimelineEvent } from '../types';
@@ -22,6 +22,8 @@ import {
   Plus,
   Edit,
   PiggyBank,
+  CircleDot,
+  Clock,
 } from 'lucide-react';
 
 type TabType = 'info' | 'risk' | 'payment' | 'property' | 'tax' | 'eviction';
@@ -40,18 +42,13 @@ export default function AuctionDetailPage() {
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [propertyModalOpen, setPropertyModalOpen] = useState(false);
 
-  useEffect(() => {
-    if (id) {
-      loadData();
-    }
-  }, [id]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    if (!id) return;
     try {
       setLoading(true);
       const [auctionData, timelineData] = await Promise.all([
-        auctionApi.getById(id!),
-        auctionApi.getTimeline(id!),
+        auctionApi.getById(id),
+        auctionApi.getTimeline(id),
       ]);
       setAuction(auctionData);
       setTimeline(timelineData);
@@ -60,7 +57,11 @@ export default function AuctionDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading || !auction) {
     return (
@@ -82,24 +83,63 @@ export default function AuctionDetailPage() {
   const canPayBalance = isWinner && !hasBalancePaid && auction.status !== 'pending';
   const canEditProperty = role === 'property';
 
-  const handleDepositSuccess = () => {
+  const handleDepositSuccess = async () => {
     setDepositModalOpen(false);
-    loadData();
+    await loadData();
   };
 
-  const handleLoanSuccess = () => {
+  const handleLoanSuccess = async () => {
     setLoanModalOpen(false);
-    loadData();
+    await loadData();
   };
 
-  const handleBalanceSuccess = () => {
+  const handleBalanceSuccess = async () => {
     setBalanceModalOpen(false);
-    loadData();
+    await loadData();
   };
 
-  const handlePropertySuccess = () => {
+  const handlePropertySuccess = async () => {
     setPropertyModalOpen(false);
-    loadData();
+    await loadData();
+  };
+
+  const getBidderPaymentSteps = () => {
+    return [
+      {
+        label: '缴纳保证金',
+        done: hasMyDeposit,
+        actionable: canPayDeposit,
+        action: () => setDepositModalOpen(true),
+        amount: auction.auctionNotice?.depositAmount,
+        amountLabel: '保证金',
+      },
+      {
+        label: '参与竞拍',
+        done: auction.bids.some((b) => b.bidderId === userId),
+        actionable: false,
+        action: () => {},
+        amount: undefined,
+        amountLabel: undefined,
+      },
+      {
+        label: '提交贷款意向',
+        done: hasMyLoan,
+        actionable: canApplyLoan,
+        action: () => setLoanModalOpen(true),
+        amount: undefined,
+        amountLabel: '贷款金额',
+      },
+      {
+        label: '补缴尾款',
+        done: hasBalancePaid,
+        actionable: canPayBalance,
+        action: () => setBalanceModalOpen(true),
+        amount: auction.transactionPrice
+          ? auction.transactionPrice - (auction.auctionNotice?.depositAmount || 0)
+          : undefined,
+        amountLabel: '应补尾款',
+      },
+    ];
   };
 
   const tabs: { key: TabType; label: string; icon: any }[] = [
@@ -450,45 +490,71 @@ export default function AuctionDetailPage() {
               {activeTab === 'payment' && (
                 <div className="space-y-6">
                   {role === 'bidder' && (
-                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="p-2 bg-blue-600 rounded-lg">
+                          <PiggyBank className="text-white" size={18} />
+                        </div>
                         <div>
-                          <h4 className="font-medium text-blue-700 mb-1">💰 我要操作</h4>
-                          <p className="text-sm text-blue-600">
-                            {hasMyDeposit
-                              ? '您已缴纳保证金，可以参与竞拍'
-                              : '缴纳保证金后即可参与竞拍'}
-                          </p>
+                          <h4 className="font-semibold text-blue-800">我的款项操作</h4>
+                          <p className="text-xs text-blue-500">按步骤完成付款流程，每步完成后将自动刷新信息</p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {canPayDeposit && (
-                            <button
-                              onClick={() => setDepositModalOpen(true)}
-                              className="flex items-center gap-1 px-4 py-2 bg-yellow-500 text-white text-sm font-medium rounded-lg hover:bg-yellow-600 transition-colors"
-                            >
-                              <PiggyBank size={16} />
-                              缴纳保证金
-                            </button>
-                          )}
-                          {canApplyLoan && (
-                            <button
-                              onClick={() => setLoanModalOpen(true)}
-                              className="flex items-center gap-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors"
-                            >
-                              <Plus size={16} />
-                              申请贷款
-                            </button>
-                          )}
-                          {canPayBalance && (
-                            <button
-                              onClick={() => setBalanceModalOpen(true)}
-                              className="flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                            >
-                              <Plus size={16} />
-                              支付尾款
-                            </button>
-                          )}
-                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {getBidderPaymentSteps().map((step, i) => (
+                          <div
+                            key={i}
+                            className={`flex items-center justify-between p-3 rounded-lg ${
+                              step.done
+                                ? 'bg-green-50 border border-green-200'
+                                : step.actionable
+                                ? 'bg-white border-2 border-blue-300 shadow-sm'
+                                : 'bg-gray-50 border border-gray-200 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              {step.done ? (
+                                <CheckCircle size={20} className="text-green-500 flex-shrink-0" />
+                              ) : step.actionable ? (
+                                <CircleDot size={20} className="text-blue-500 flex-shrink-0 animate-pulse" />
+                              ) : (
+                                <Clock size={20} className="text-gray-400 flex-shrink-0" />
+                              )}
+                              <div>
+                                <span className={`text-sm font-medium ${step.done ? 'text-green-700' : step.actionable ? 'text-blue-700' : 'text-gray-500'}`}>
+                                  {step.label}
+                                </span>
+                                {step.done && (
+                                  <span className="text-xs text-green-500 ml-2">✓ 已完成</span>
+                                )}
+                                {step.actionable && (
+                                  <span className="text-xs text-blue-500 ml-2">待操作</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              {step.amount !== undefined && step.amountLabel && (
+                                <span className={`text-sm font-medium ${step.done ? 'text-green-600' : 'text-blue-600'}`}>
+                                  {step.amountLabel}：{formatCurrency(step.amount)}
+                                </span>
+                              )}
+                              {step.actionable && (
+                                <button
+                                  onClick={step.action}
+                                  className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                                    i === 0
+                                      ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                                      : i === 2
+                                      ? 'bg-green-500 text-white hover:bg-green-600'
+                                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                                  }`}
+                                >
+                                  {step.label} →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}

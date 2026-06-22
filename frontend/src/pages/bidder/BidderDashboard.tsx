@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auctionApi, bidderApi } from '../../services/api';
 import type { Auction, DepositRecord, BidRecord, LoanApplication } from '../../types';
@@ -8,7 +8,7 @@ import Modal from '../../components/Modal';
 import DepositForm from '../../components/DepositForm';
 import LoanApplicationForm from '../../components/LoanApplicationForm';
 import BalancePaymentForm from '../../components/BalancePaymentForm';
-import { CreditCard, TrendingUp, AlertTriangle, PiggyBank, Plus } from 'lucide-react';
+import { CreditCard, TrendingUp, AlertTriangle, PiggyBank, Plus, CheckCircle, Clock } from 'lucide-react';
 
 export default function BidderDashboard() {
   const navigate = useNavigate();
@@ -25,16 +25,12 @@ export default function BidderDashboard() {
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [selectedAuction, setSelectedAuction] = useState<Auction | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [userId, activeTab]);
-
-  const loadData = async () => {
+  const loadAllData = useCallback(async () => {
     try {
       setLoading(true);
       const auctionsData = await auctionApi.getAll();
 
-      if (activeTab === 'my' && userId) {
+      if (userId) {
         const [depositsData, bidsData, loansData] = await Promise.all([
           bidderApi.getMyDeposits(userId),
           bidderApi.getMyBids(userId),
@@ -44,12 +40,16 @@ export default function BidderDashboard() {
         setBids(bidsData);
         setLoans(loansData);
 
-        const myAuctionIds = new Set([
-          ...depositsData.map((d) => d.auctionId),
-          ...bidsData.map((b) => b.auctionId),
-          ...loansData.map((l) => l.auctionId),
-        ]);
-        setAuctions(auctionsData.filter((a) => myAuctionIds.has(a.id)));
+        if (activeTab === 'my') {
+          const myAuctionIds = new Set([
+            ...depositsData.map((d) => d.auctionId),
+            ...bidsData.map((b) => b.auctionId),
+            ...loansData.map((l) => l.auctionId),
+          ]);
+          setAuctions(auctionsData.filter((a) => myAuctionIds.has(a.id)));
+        } else {
+          setAuctions(auctionsData);
+        }
       } else {
         setAuctions(auctionsData);
       }
@@ -58,7 +58,11 @@ export default function BidderDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId, activeTab]);
+
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
 
   const handlePayDeposit = (auction: Auction) => {
     setSelectedAuction(auction);
@@ -75,22 +79,22 @@ export default function BidderDashboard() {
     setBalanceModalOpen(true);
   };
 
-  const handleDepositSuccess = () => {
+  const handleDepositSuccess = async () => {
     setDepositModalOpen(false);
     setSelectedAuction(null);
-    loadData();
+    await loadAllData();
   };
 
-  const handleLoanSuccess = () => {
+  const handleLoanSuccess = async () => {
     setLoanModalOpen(false);
     setSelectedAuction(null);
-    loadData();
+    await loadAllData();
   };
 
-  const handleBalanceSuccess = () => {
+  const handleBalanceSuccess = async () => {
     setBalanceModalOpen(false);
     setSelectedAuction(null);
-    loadData();
+    await loadAllData();
   };
 
   const myWinningBids = bids.filter((b) => b.isWinning);
@@ -118,6 +122,20 @@ export default function BidderDashboard() {
       return;
     }
     navigate(`/auction/${auction.id}`);
+  };
+
+  const getBidderSteps = (auction: Auction) => {
+    const hasMyDeposit = deposits.some((d) => d.auctionId === auction.id);
+    const isWinner = auction.winningBidder?.id === userId;
+    const hasMyLoan = loans.some((l) => l.auctionId === auction.id);
+    const hasBalancePaid = auction.balancePayments.length > 0;
+
+    return [
+      { label: '缴纳保证金', done: hasMyDeposit, actionable: canPayDeposit(auction) },
+      { label: '参与竞拍', done: bids.some((b) => b.auctionId === auction.id), actionable: false },
+      { label: '申请贷款', done: hasMyLoan, actionable: isWinner && !hasMyLoan && canApplyLoan(auction) },
+      { label: '支付尾款', done: hasBalancePaid, actionable: isWinner && !hasBalancePaid && canPayBalance(auction) },
+    ];
   };
 
   return (
@@ -156,7 +174,7 @@ export default function BidderDashboard() {
           </div>
           <div className="text-2xl font-bold text-gray-800">{loans.length} 笔</div>
           <div className="text-sm text-gray-400 mt-1">
-            审批通过 {loans.filter((l) => l.status === 'approved').length} 笔
+            审批通过 {loans.filter((l) => l.status === 'approved' || l.status === 'disbursed').length} 笔
           </div>
         </div>
 
@@ -210,6 +228,7 @@ export default function BidderDashboard() {
                 const statusInfo = statusMap[auction.status];
                 const hasMyDeposit = deposits.some((d) => d.auctionId === auction.id);
                 const isWinner = auction.winningBidder?.id === userId;
+                const steps = getBidderSteps(auction);
 
                 return (
                   <div
@@ -240,6 +259,23 @@ export default function BidderDashboard() {
 
                     <div className="text-sm text-gray-500 mb-3">
                       📍 {auction.propertyInfo.address}
+                    </div>
+
+                    <div className="flex items-center gap-4 mb-3 p-2 bg-gray-50 rounded-lg">
+                      {steps.map((step, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          {step.done ? (
+                            <CheckCircle size={14} className="text-green-500" />
+                          ) : step.actionable ? (
+                            <Clock size={14} className="text-blue-500 animate-pulse" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300" />
+                          )}
+                          <span className={`text-xs ${step.done ? 'text-green-600 font-medium' : step.actionable ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
+                            {step.label}
+                          </span>
+                        </div>
+                      ))}
                     </div>
 
                     <div className="flex items-center justify-between pt-3 border-t border-gray-100">
@@ -288,7 +324,7 @@ export default function BidderDashboard() {
                           }}
                           className="flex items-center gap-1 px-3 py-1.5 bg-yellow-500 text-white text-xs font-medium rounded-lg hover:bg-yellow-600 transition-colors"
                         >
-                          <Plus size={14} />
+                          <PiggyBank size={14} />
                           缴纳保证金
                         </button>
                       )}
@@ -301,7 +337,7 @@ export default function BidderDashboard() {
                           }}
                           className="flex items-center gap-1 px-3 py-1.5 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 transition-colors"
                         >
-                          <Plus size={14} />
+                          <CreditCard size={14} />
                           申请贷款
                         </button>
                       )}
